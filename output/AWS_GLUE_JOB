@@ -1,0 +1,33 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from pyspark.sql.functions import *
+from awsglue.dynamicframe import DynamicFrame
+
+
+## @params: [JOB_NAME]
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+
+
+#load_csv file
+input_file = glueContext.create_dynamic_frame.from_catalog(database = "default", table_name = "input")
+
+#age, create_date and update_date conversion
+var_conversion = ApplyMapping.apply(frame = input_file, mappings = [ ("id", "bigint", "id", "bigint"), ("name", "string", "name", "string"), ("email", "string", "email", "string"), ("phone", "string", "phone", "string"), ("address", "string", "address", "string"), ("age", "bigint", "age", "int"), ("create_date", "string", "create_date", "timestamp"), ("update_date", "string", "update_date", "timestamp")])
+
+#deduplication process
+df2 = var_conversion.toDF().orderBy("id", col("update_date").desc()).dropDuplicates(["id"])
+consolidated_dynamicframe = DynamicFrame.fromDF(df2.repartition(1), glueContext, "consolidated_dynamicframe")
+
+#PARQUET convertion and saving
+output_file = glueContext.write_dynamic_frame.from_options(frame = consolidated_dynamicframe, connection_type = "s3", format = "parquet", connection_options = {"path": "s3://testeguilhermovaldez/output/",  "partitionKeys": []}, transformation_ctx = "output_file")
+job.commit()
